@@ -2,12 +2,16 @@
 IBN ABBAS QURAN CENTER - HARA TOWN
 Telegram Bot: @Abuki07_bot
 
-Features:
+Features (v1 - no AI credit required):
 1. Auto-reply to common questions (keyword based)
-2. AI Q&A about Islam (using Anthropic Claude API)
-3. Scheduled daily posts (Hadith/Ayah) to the channel
-4. Broadcast command for the admin
-5. Welcome message for new members
+2. Scheduled daily posts (Hadith/Ayah) to the channel
+3. Broadcast command for the admin
+4. Welcome message for new members
+
+NOTE: AI Q&A (Claude) is included but DISABLED by default until
+you add credit to your Anthropic account. Once you add credit,
+set the ENABLE_AI environment variable to "true" on Railway and
+everything will work automatically - no code changes needed.
 
 Deploy on Railway.app / Render.com
 """
@@ -26,18 +30,23 @@ from telegram.ext import (
     ContextTypes,
     filters,
 )
-import anthropic
 
 # ------------------------------------------------------------------
 # CONFIGURATION  (set these as Environment Variables on your host)
 # ------------------------------------------------------------------
 BOT_TOKEN = os.environ.get("BOT_TOKEN")                 # from BotFather
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")  # from console.anthropic.com
 CHANNEL_USERNAME = os.environ.get("CHANNEL_USERNAME", "@ibnuabbas_hara")  # your channel
 ADMIN_IDS = [int(x) for x in os.environ.get("ADMIN_IDS", "").split(",") if x.strip()]
 POST_HOUR_UTC = int(os.environ.get("POST_HOUR_UTC", "3"))   # UTC hour for daily post (3 UTC = 6 AM Addis)
 
-client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+# Turn AI Q&A on/off. Leave False until you add credit to console.anthropic.com
+ENABLE_AI = os.environ.get("ENABLE_AI", "false").lower() == "true"
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
+
+client = None
+if ENABLE_AI and ANTHROPIC_API_KEY:
+    import anthropic
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -53,12 +62,13 @@ AUTO_REPLIES = {
     "ቻናል": f"የቻናላችን ሊንክ፦ {CHANNEL_USERNAME}",
     "ሰዓት": "የሶላት ሰዓት ለማወቅ አካባቢዎን ይላኩልኝ ወይም local mosque schedule ይመልከቱ።",
     "ማዕከል": "IBN ABBAS QURAN CENTER HARA TOWN የቁርአን እና እስልምና ትምህርት ማዕከል ነው። ለበለጠ መረጃ ቻናላችንን ይከተሉ።",
+    "አድራሻ": "IBN ABBAS QURAN CENTER በሃራ ከተማ ይገኛል። ለበለጠ መረጃ ቻናላችንን ይመልከቱ።",
 }
 
 WELCOME_TEXT = (
     "🕌 እንኳን ደህና መጡ!\n\n"
     "ወደ *IBN ABBAS QURAN CENTER - HARA TOWN* ቦት በደህና መጡ።\n"
-    "ስለ ቁርአን፣ ሐዲስ፣ ሶላት እና እስልምና ማንኛውንም ጥያቄ በቀጥታ ይላኩልኝ - በአማርኛ እመልሳለሁ።\n\n"
+    "ስለ ማዕከላችን መረጃ ለማግኘት ወይም ጥያቄ ካለዎት ይላኩልኝ።\n\n"
     "📌 /help - የትዕዛዞች ዝርዝር\n"
     f"📢 ቻናላችን፦ {CHANNEL_USERNAME}"
 )
@@ -66,10 +76,12 @@ WELCOME_TEXT = (
 HELP_TEXT = (
     "*የሚገኙ ትዕዛዞች፦*\n"
     "/start - ቦቱን ማስጀመር\n"
-    "/help - ይህ የእገዛ መልእክት\n"
-    "/ask <ጥያቄ> - ስለ እስልምና ጥያቄ መጠየቅ (ለምሳሌ: /ask ሶላት ስንት ናቸው)\n\n"
-    "ያለ ትዕዛዝ በቀጥታ መልእክት ቢልኩም እመልስልዎታለሁ።"
+    "/help - ይህ የእገዛ መልእክት\n\n"
+    "ተደጋጋሚ ቃላት (ሰላም፣ ቻናል፣ ሰዓት፣ ማዕከል፣ አድራሻ) የያዘ መልእክት ቢልኩ በራስ-ሰር እመልስልዎታለሁ።"
 )
+
+if ENABLE_AI:
+    HELP_TEXT += "\n/ask <ጥያቄ> - ስለ እስልምና ጥያቄ መጠየቅ"
 
 # ------------------------------------------------------------------
 # DAILY HADITH/AYAH POOL (add as many as you like)
@@ -101,7 +113,7 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 def ask_claude(question: str) -> str:
-    """Send a question to Claude and return the Amharic answer."""
+    """Send a question to Claude and return the Amharic answer. Only used if ENABLE_AI=True."""
     system_prompt = (
         "You are an Islamic knowledge assistant for 'Ibn Abbas Quran Center, Hara Town'. "
         "Answer questions about Quran, Hadith, Salah, Islamic history and general Islamic "
@@ -125,9 +137,12 @@ def ask_claude(question: str) -> str:
 
 
 async def ask_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not ENABLE_AI:
+        await update.message.reply_text("ይህ ባህሪ በቅርቡ ይመጣል። እባክዎ ይጠብቁ 🙏")
+        return
     question = " ".join(context.args)
     if not question:
-        await update.message.reply_text("እባክዎ ከ /ask በኋላ ጥያቄዎን ይጻፉ። ለምሳሌ፦ /ask ሶላት ስንት ናቸው")
+        await update.message.reply_text("እባክዎ ከ /ask በኋላ ጥያቄዎን ይጻፉ።")
         return
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     answer = ask_claude(question)
@@ -136,7 +151,6 @@ async def ask_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text or ""
-    text_lower = text.lower()
 
     # 1. Check keyword auto-replies first
     for keyword, reply in AUTO_REPLIES.items():
@@ -144,10 +158,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(reply)
             return
 
-    # 2. Otherwise fall back to AI Q&A
-    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-    answer = ask_claude(text)
-    await update.message.reply_text(answer)
+    # 2. If AI is enabled, fall back to AI Q&A. Otherwise, give a friendly default reply.
+    if ENABLE_AI and client:
+        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+        answer = ask_claude(text)
+        await update.message.reply_text(answer)
+    else:
+        await update.message.reply_text(
+            "መልእክትዎ ደርሶኛል፣ ነገር ግን ገና ሁሉንም ጥያቄ በራስ-ሰር መመለስ አልችልም። "
+            "/help ብለው ይላኩ የሚገኙ ትዕዛዞችን ለማየት፣ ወይም ቻናላችንን ይከተሉ፦ "
+            f"{CHANNEL_USERNAME}"
+        )
 
 
 async def broadcast_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -194,7 +215,7 @@ def main():
     if app.job_queue:
         app.job_queue.run_daily(daily_post, time=dtime(hour=POST_HOUR_UTC, minute=0))
 
-    logger.info("Bot starting...")
+    logger.info(f"Bot starting... (AI Q&A enabled: {ENABLE_AI})")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
